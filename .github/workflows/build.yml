@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# My Digital Garden – GitHub Actions Build (uv)
+#
+# Gera dois artefatos em cada push na branch main (ou manualmente):
+#   • APK Android  → ubuntu-latest
+#   • EXE Windows  → windows-latest
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Build APK & EXE
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION:  "3.12"
+  FLUTTER_VERSION: "3.24.0"
+  JAVA_VERSION:    "21"
+
+# ─── JOB 1: APK Android ──────────────────────────────────────────────────────
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Configurar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configurar Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Configurar Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar dependências com uv
+        run: uv sync
+
+      - name: Desabilitar analytics do Flutter
+        run: flutter config --no-analytics
+
+      - name: Build APK
+        run: uv run flet build apk --verbose
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/apk/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+# ─── JOB 2: EXE Windows ──────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Configurar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configurar Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar dependências com uv
+        run: uv sync
+
+      - name: Desabilitar analytics do Flutter
+        run: flutter config --no-analytics
+
+      - name: Build Windows
+        run: uv run flet build windows --verbose
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: build/windows/**
+          if-no-files-found: error
+          retention-days: 7
