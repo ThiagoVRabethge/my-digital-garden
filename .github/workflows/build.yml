@@ -1,9 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # My Digital Garden – GitHub Actions Build (uv)
-#
-# Gera dois artefatos em cada push na branch main (ou manualmente):
-#   • APK Android  → ubuntu-latest
-#   • EXE Windows  → windows-latest
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build APK & EXE
@@ -15,7 +11,7 @@ on:
 
 env:
   PYTHON_VERSION:  "3.12"
-  FLUTTER_VERSION: "3.24.0"
+  FLUTTER_VERSION: "3.41.0"   # versão mínima exigida pelo flet 0.84
   JAVA_VERSION:    "21"
 
 # ─── JOB 1: APK Android ──────────────────────────────────────────────────────
@@ -25,17 +21,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout do código
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Instalar uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - name: Configurar Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
-        with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Configurar Java ${{ env.JAVA_VERSION }}
@@ -51,14 +43,15 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Instalar dependências com uv
+      - name: Instalar dependências
         run: uv sync
 
-      - name: Desabilitar analytics do Flutter
+      - name: Desabilitar analytics
         run: flutter config --no-analytics
 
       - name: Build APK
-        run: uv run flet build apk --verbose
+        # --yes suprime todos os prompts interativos do flet build
+        run: uv run flet build apk --yes --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -74,17 +67,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout do código
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Instalar uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - name: Configurar Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
-        with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Configurar Flutter ${{ env.FLUTTER_VERSION }}
@@ -94,14 +83,14 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Instalar dependências com uv
+      - name: Instalar dependências
         run: uv sync
 
-      - name: Desabilitar analytics do Flutter
+      - name: Desabilitar analytics
         run: flutter config --no-analytics
 
       - name: Build Windows
-        run: uv run flet build windows --verbose
+        run: uv run flet build windows --yes --verbose
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4

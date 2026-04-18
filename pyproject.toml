@@ -1,7 +1,7 @@
 [project]
 name = "my-digital-garden"
 version = "1.0.0"
-description = "Personal knowledge organizer – folders, links and markdown notes"
+description = "Personal knowledge organizer - folders, links and markdown notes"
 requires-python = ">=3.12"
 dependencies = [
     "flet>=0.80.0",
@@ -9,10 +9,10 @@ dependencies = [
 ]
 
 [tool.flet]
-app_name    = "My Digital Garden"
-app_id      = "com.mydigitalgarden.app"
-product     = "My Digital Garden"
-org         = "mydigitalgarden"
+app_name = "My Digital Garden"
+app_id   = "com.mydigitalgarden.app"
+product  = "My Digital Garden"
+org      = "mydigitalgarden"
 
-[tool.uv]
-dev-dependencies = []
+[dependency-groups]
+dev = []
