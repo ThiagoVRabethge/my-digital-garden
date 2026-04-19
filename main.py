@@ -24,6 +24,7 @@ class Item(Base):
     tipo = Column(String(20))
     pai_id = Column(Integer, ForeignKey("itens.id"), nullable=True)
     ordem = Column(Integer, default=0)
+    data_criacao = Column(Integer, default=0)  # timestamp unix
     filhos = relationship(
         "Item",
         backref=backref("pai", remote_side=[id]),
@@ -31,7 +32,24 @@ class Item(Base):
     )
 
 
+class Preferencia(Base):
+    __tablename__ = "preferencias"
+    chave = Column(String(50), primary_key=True)
+    valor = Column(String(100), nullable=False)
+
 Base.metadata.create_all(engine)
+
+def pref_get(session, chave, default=""):
+    p = session.get(Preferencia, chave)
+    return p.valor if p else default
+
+def pref_set(session, chave, valor):
+    p = session.get(Preferencia, chave)
+    if p:
+        p.valor = valor
+    else:
+        session.add(Preferencia(chave=chave, valor=valor))
+    session.commit()
 
 # --- Paleta ---
 BG       = "#0D0D0F"
@@ -154,7 +172,11 @@ def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_it
     def on_accept(e):
         e.control.content.border = None
         e.control.update()
-        src_id = int(e.src_id)
+        try:
+            # Flet 0.80+: drag data comes via e.data
+            src_id = int(e.data)
+        except (AttributeError, ValueError, TypeError):
+            return
         tgt_id = item.id
         if src_id != tgt_id:
             on_drag_complete(src_id, tgt_id)
@@ -426,6 +448,8 @@ def main(page: ft.Page):
     session   = Session()
     stack_nav = []
     view_state = {"atual": "grid"}
+    _modo_salvo = pref_get(session, "sort_modo", "criacao")
+    sort_state = {"modo": _modo_salvo}
 
     def pai_id():
         return stack_nav[-1].id if stack_nav else None
@@ -461,18 +485,55 @@ def main(page: ft.Page):
     back_btn = ft.IconButton(ft.Icons.ARROW_BACK_ROUNDED, icon_color=TEXT_SUB,
                              on_click=lambda _: voltar(), visible=False)
 
+    sort_btn = ft.PopupMenuButton(
+        icon=ft.Icons.SORT_ROUNDED,
+        icon_color=TEXT_SUB,
+        icon_size=20,
+        tooltip="Ordenar",
+        visible=True,
+        items=[
+            ft.PopupMenuItem(
+                content=ft.Row([ft.Icon(ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB),
+                                ft.Text("A → Z", size=13, color=TEXT)], spacing=10),
+                on_click=lambda _: set_sort("az"),
+            ),
+            ft.PopupMenuItem(
+                content=ft.Row([ft.Icon(ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB),
+                                ft.Text("Z → A", size=13, color=TEXT)], spacing=10),
+                on_click=lambda _: set_sort("za"),
+            ),
+            ft.PopupMenuItem(),
+            ft.PopupMenuItem(
+                content=ft.Row([ft.Icon(ft.Icons.SCHEDULE_ROUNDED, size=16, color=TEXT_SUB),
+                                ft.Text("Mais recente", size=13, color=TEXT)], spacing=10),
+                on_click=lambda _: set_sort("recente"),
+            ),
+            ft.PopupMenuItem(
+                content=ft.Row([ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=TEXT_SUB),
+                                ft.Text("Mais antigo", size=13, color=TEXT)], spacing=10),
+                on_click=lambda _: set_sort("criacao"),
+            ),
+        ],
+    )
+
     appbar = ft.Container(
-        content=ft.Row([back_btn, appbar_title], vertical_alignment="center", spacing=4),
+        content=ft.Row([back_btn, appbar_title, sort_btn], vertical_alignment="center", spacing=4),
         bgcolor=SURFACE,
         border=ft.Border(bottom=ft.BorderSide(1, BORDER)),
         padding=pad(h=8, v=12),
         height=56,
     )
 
-    def set_appbar(title, show_back=False):
+    def set_appbar(title, show_back=False, show_sort=True):
         appbar_title.value = title
         back_btn.visible   = show_back
+        sort_btn.visible   = show_sort
         appbar.update()
+
+    def set_sort(modo):
+        sort_state["modo"] = modo
+        pref_set(session, "sort_modo", modo)
+        renderizar_grid()
 
     # ── DRAG & DROP ───────────────────────────────────────────────────────────
     def on_drag_complete(src_id, tgt_id):
@@ -504,10 +565,18 @@ def main(page: ft.Page):
         set_appbar(pasta_atual_nome(), show_back=bool(stack_nav))
         page.floating_action_button.visible = True
 
-        itens = (session.query(Item)
-                 .filter_by(pai_id=pai_id())
-                 .order_by(Item.ordem, Item.id)
-                 .all())
+        from sqlalchemy import asc, desc
+        modo = sort_state["modo"]
+        q = session.query(Item).filter_by(pai_id=pai_id())
+        if modo == "az":
+            q = q.order_by(asc(Item.titulo))
+        elif modo == "za":
+            q = q.order_by(desc(Item.titulo))
+        elif modo == "recente":
+            q = q.order_by(desc(Item.data_criacao), desc(Item.id))
+        else:  # criacao (mais antigo)
+            q = q.order_by(asc(Item.data_criacao), asc(Item.id))
+        itens = q.all()
         pastas = [i for i in itens if i.tipo == "Pasta"]
         links  = [i for i in itens if i.tipo == "Link"]
         notas  = [i for i in itens if i.tipo == "Nota"]
@@ -565,7 +634,7 @@ def main(page: ft.Page):
     # ── VER NOTA ──────────────────────────────────────────────────────────────
     def ver_nota(item):
         view_state["atual"] = "nota"
-        set_appbar(item.titulo, show_back=True)
+        set_appbar(item.titulo, show_back=True, show_sort=False)
         page.floating_action_button.visible = False
 
         main_content.content = ft.Column(
@@ -595,7 +664,7 @@ def main(page: ft.Page):
         view_state["atual"] = "editor"
         is_nota = tipo == "Nota"
         header  = ("Editar" if item_existente else "Novo") + f" {tipo}"
-        set_appbar(header, show_back=True)
+        set_appbar(header, show_back=True, show_sort=False)
         page.floating_action_button.visible = False
 
         titulo_input = ft.TextField(
@@ -618,8 +687,10 @@ def main(page: ft.Page):
                     item_existente.titulo   = titulo_input.value.strip()
                     item_existente.conteudo = content
                 else:
+                    import time
                     session.add(Item(titulo=titulo_input.value.strip(),
-                                     conteudo=content, tipo=tipo, pai_id=pai_id()))
+                                     conteudo=content, tipo=tipo, pai_id=pai_id(),
+                                     data_criacao=int(time.time())))
                 session.commit()
                 view_state["atual"] = "grid"
                 renderizar()
@@ -660,9 +731,11 @@ def main(page: ft.Page):
                     item_existente.titulo   = titulo_input.value.strip()
                     item_existente.conteudo = conteudo_input.value
                 else:
+                    import time
                     session.add(Item(titulo=titulo_input.value.strip(),
                                      conteudo=conteudo_input.value,
-                                     tipo=tipo, pai_id=pai_id()))
+                                     tipo=tipo, pai_id=pai_id(),
+                                     data_criacao=int(time.time())))
                 session.commit()
                 view_state["atual"] = "grid"
                 renderizar()
@@ -744,8 +817,10 @@ def main(page: ft.Page):
         def criar(e):
             if tf.value.strip():
                 total = session.query(Item).filter_by(pai_id=pai_id()).count()
+                import time
                 session.add(Item(titulo=tf.value.strip(), tipo="Pasta",
-                                 pai_id=pai_id(), ordem=total))
+                                 pai_id=pai_id(), ordem=total,
+                                 data_criacao=int(time.time())))
                 session.commit()
                 dlg.open = False
                 renderizar()
