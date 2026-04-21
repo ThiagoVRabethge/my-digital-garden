@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-import sys
 import io
+import sys
 import webbrowser
 
 if sys.platform == "win32":
@@ -8,7 +8,7 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import flet as ft
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Column, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import backref, declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
@@ -30,6 +30,7 @@ class Item(Base):
         backref=backref("pai", remote_side=[id]),
         cascade="all, delete-orphan",
     )
+    tags = Column(JSON, default=[])  # Lista de tags para cada item
 
 
 class Preferencia(Base):
@@ -37,11 +38,14 @@ class Preferencia(Base):
     chave = Column(String(50), primary_key=True)
     valor = Column(String(100), nullable=False)
 
+
 Base.metadata.create_all(engine)
+
 
 def pref_get(session, chave, default=""):
     p = session.get(Preferencia, chave)
     return p.valor if p else default
+
 
 def pref_set(session, chave, valor):
     p = session.get(Preferencia, chave)
@@ -51,44 +55,45 @@ def pref_set(session, chave, valor):
         session.add(Preferencia(chave=chave, valor=valor))
     session.commit()
 
+
 # --- Paleta ---
-BG       = "#0D0D0F"
-SURFACE  = "#141417"
-CARD     = "#1A1A1F"
+BG = "#0D0D0F"
+SURFACE = "#141417"
+CARD = "#1A1A1F"
 CARD_HOV = "#222228"
 CARD_DRG = "#2A2A40"
-BORDER   = "#2A2A35"
-ACCENT   = "#7C6AF7"
-ACCENT2  = "#4FC3F7"
-GREEN    = "#56D6A0"
-TEXT     = "#E8E8F0"
+BORDER = "#2A2A35"
+ACCENT = "#7C6AF7"
+ACCENT2 = "#4FC3F7"
+GREEN = "#56D6A0"
+TEXT = "#E8E8F0"
 TEXT_SUB = "#6B6B80"
 TEXT_DIM = "#3D3D50"
-WHITE    = "#FFFFFF"
-RED      = "#C0392B"
-TOOLBAR  = "#18181D"
+WHITE = "#FFFFFF"
+RED = "#C0392B"
+TOOLBAR = "#18181D"
 
 
 def chip_cor(tipo):
     return {
-        "Pasta": (ACCENT,  "#1E1B3A"),
-        "Link":  (ACCENT2, "#112230"),
-        "Nota":  (GREEN,   "#0F2820"),
+        "Pasta": (ACCENT, "#1E1B3A"),
+        "Link": (ACCENT2, "#112230"),
+        "Nota": (GREEN, "#0F2820"),
     }.get(tipo, (TEXT_SUB, CARD))
 
 
 def icone_tipo(tipo):
     return {
         "Pasta": ft.Icons.FOLDER_ROUNDED,
-        "Link":  ft.Icons.OPEN_IN_NEW_ROUNDED,
-        "Nota":  ft.Icons.ARTICLE_ROUNDED,
+        "Link": ft.Icons.OPEN_IN_NEW_ROUNDED,
+        "Nota": ft.Icons.ARTICLE_ROUNDED,
     }.get(tipo, ft.Icons.CIRCLE)
 
 
 def pad(a=0, t=None, r=None, b=None, h=None, v=None):
-    left   = h if h is not None else a
-    right  = h if h is not None else (r if r is not None else a)
-    top    = v if v is not None else (t if t is not None else a)
+    left = h if h is not None else a
+    right = h if h is not None else (r if r is not None else a)
+    top = v if v is not None else (t if t is not None else a)
     bottom = v if v is not None else (b if b is not None else a)
     return ft.Padding(left=left, top=top, right=right, bottom=bottom)
 
@@ -99,20 +104,30 @@ def divider():
 
 # ─── DRAG & DROP LIST ITEM ────────────────────────────────────────────────────
 
-def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_items_ref):
+
+def build_list_item(
+    item, on_click, on_edit, on_delete, on_drag_complete, all_items_ref
+):
     cor, bg = chip_cor(item.tipo)
-    icone   = icone_tipo(item.tipo)
+    icone = icone_tipo(item.tipo)
 
     preview = ""
     if item.tipo == "Nota" and item.conteudo:
-        preview = item.conteudo[:60].replace("\n", " ") + ("..." if len(item.conteudo) > 60 else "")
+        preview = item.conteudo[:60].replace("\n", " ") + (
+            "..." if len(item.conteudo) > 60 else ""
+        )
     elif item.tipo == "Link" and item.conteudo:
         preview = item.conteudo[:50]
 
     def popup_item(label, icon_name, handler):
         return ft.PopupMenuItem(
-            content=ft.Row([ft.Icon(icon_name, size=14, color=TEXT_SUB),
-                            ft.Text(label, size=13, color=TEXT)], spacing=10),
+            content=ft.Row(
+                [
+                    ft.Icon(icon_name, size=14, color=TEXT_SUB),
+                    ft.Text(label, size=13, color=TEXT),
+                ],
+                spacing=10,
+            ),
             on_click=handler,
         )
 
@@ -121,39 +136,85 @@ def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_it
         icon_color=TEXT_DIM,
         icon_size=20,
         items=[
-            popup_item("Editar",  ft.Icons.EDIT_ROUNDED,          lambda e, i=item: on_edit(i)),
+            popup_item("Editar", ft.Icons.EDIT_ROUNDED, lambda e, i=item: on_edit(i)),
             ft.PopupMenuItem(),
-            popup_item("Excluir", ft.Icons.DELETE_OUTLINE_ROUNDED, lambda e, i=item: on_delete(i)),
+            popup_item(
+                "Excluir",
+                ft.Icons.DELETE_OUTLINE_ROUNDED,
+                lambda e, i=item: on_delete(i),
+            ),
         ],
     )
 
-    card_content = ft.Row(
+    # Visualização das tags
+    tags_row = ft.Container(height=0)
+    if item.tags:
+        tags_row = ft.Row(
+            [
+                ft.Container(
+                    content=ft.Text(f"#{tag}", size=10, color=TEXT_SUB),
+                    bgcolor=CARD_HOV,
+                    border_radius=6,
+                    padding=ft.Padding(4, 2, 4, 2),
+                )
+                for tag in item.tags
+            ],
+            spacing=4,
+            wrap=True,
+        )
+
+    card_content = ft.Column(
         [
-            # Handle de drag
-            ft.Container(
-                content=ft.Icon(ft.Icons.DRAG_INDICATOR_ROUNDED, size=18, color=TEXT_DIM),
-                padding=pad(r=4),
-            ),
-            ft.Container(
-                content=ft.Icon(icone, size=20, color=cor),
-                bgcolor=bg, border_radius=10, padding=10,
-                width=44, height=44,
-            ),
-            ft.Container(width=12),
-            ft.Column(
+            ft.Row(
                 [
-                    ft.Text(item.titulo, size=15, weight="w600", color=TEXT,
-                            max_lines=1, overflow="ellipsis"),
-                    ft.Text(preview, size=12, color=TEXT_SUB,
-                            max_lines=1, overflow="ellipsis") if preview
-                    else ft.Container(height=0),
+                    # Handle de drag
+                    ft.Container(
+                        content=ft.Icon(
+                            ft.Icons.DRAG_INDICATOR_ROUNDED, size=18, color=TEXT_DIM
+                        ),
+                        padding=pad(r=4),
+                    ),
+                    ft.Container(
+                        content=ft.Icon(icone, size=20, color=cor),
+                        bgcolor=bg,
+                        border_radius=10,
+                        padding=10,
+                        width=44,
+                        height=44,
+                    ),
+                    ft.Container(width=12),
+                    ft.Column(
+                        [
+                            ft.Text(
+                                item.titulo,
+                                size=15,
+                                weight="w600",
+                                color=TEXT,
+                                max_lines=1,
+                                overflow="ellipsis",
+                            ),
+                            ft.Text(
+                                preview,
+                                size=12,
+                                color=TEXT_SUB,
+                                max_lines=1,
+                                overflow="ellipsis",
+                            )
+                            if preview
+                            else ft.Container(height=0),
+                            tags_row,  # Adiciona as tags aqui
+                        ],
+                        spacing=2,
+                        expand=True,
+                        alignment="center",
+                    ),
+                    ft.Container(width=4),
+                    menu,
                 ],
-                spacing=2, expand=True, alignment="center",
+                vertical_alignment="center",
             ),
-            ft.Container(width=4),
-            menu,
         ],
-        vertical_alignment="center",
+        spacing=0,
     )
 
     card = ft.Container(
@@ -173,7 +234,6 @@ def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_it
         e.control.content.border = None
         e.control.update()
         try:
-            # Flet 0.80+: drag data comes via e.data
             src_id = int(e.data)
         except (AttributeError, ValueError, TypeError):
             return
@@ -198,10 +258,13 @@ def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_it
         data=str(item.id),
         content=drop_target,
         content_when_dragging=ft.Container(
-            content=ft.Row([
-                ft.Icon(icone, size=18, color=cor),
-                ft.Text(item.titulo, size=14, color=TEXT_SUB, max_lines=1),
-            ], spacing=10),
+            content=ft.Row(
+                [
+                    ft.Icon(icone, size=18, color=cor),
+                    ft.Text(item.titulo, size=14, color=TEXT_SUB, max_lines=1),
+                ],
+                spacing=10,
+            ),
             bgcolor=CARD_DRG,
             border_radius=14,
             padding=pad(h=16, v=12),
@@ -209,10 +272,13 @@ def build_list_item(item, on_click, on_edit, on_delete, on_drag_complete, all_it
             opacity=0.85,
         ),
         content_feedback=ft.Container(
-            content=ft.Row([
-                ft.Icon(icone, size=18, color=cor),
-                ft.Text(item.titulo, size=14, color=TEXT, max_lines=1),
-            ], spacing=10),
+            content=ft.Row(
+                [
+                    ft.Icon(icone, size=18, color=cor),
+                    ft.Text(item.titulo, size=14, color=TEXT, max_lines=1),
+                ],
+                spacing=10,
+            ),
             bgcolor=CARD_DRG,
             border_radius=14,
             padding=pad(h=16, v=12),
@@ -229,6 +295,7 @@ def section_title(text):
 
 
 # ─── EDITOR DE NOTAS COM TOOLBAR ─────────────────────────────────────────────
+
 
 def build_note_editor(initial_value="", on_save=None, on_cancel=None):
     """
@@ -251,12 +318,14 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
     )
 
     preview_col = ft.Column(
-        [ft.Markdown(
-            initial_value or "_Comece a escrever..._",
-            selectable=True,
-            extension_set="gitHubFlavored",
-            code_theme="atom-one-dark",
-        )],
+        [
+            ft.Markdown(
+                initial_value or "_Comece a escrever..._",
+                selectable=True,
+                extension_set="gitHubFlavored",
+                code_theme="atom-one-dark",
+            )
+        ],
         scroll="auto",
         expand=True,
     )
@@ -280,9 +349,11 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
 
     def toggle_preview(e):
         mode["preview"] = not mode["preview"]
-        content_field.visible  = not mode["preview"]
+        content_field.visible = not mode["preview"]
         preview_container.visible = mode["preview"]
-        preview_btn.icon = ft.Icons.EDIT_ROUNDED if mode["preview"] else ft.Icons.VISIBILITY_ROUNDED
+        preview_btn.icon = (
+            ft.Icons.EDIT_ROUNDED if mode["preview"] else ft.Icons.VISIBILITY_ROUNDED
+        )
         preview_btn.tooltip = "Editar" if mode["preview"] else "Preview"
         if mode["preview"]:
             atualizar_preview()
@@ -294,7 +365,7 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
         """Insere sintaxe markdown na posição do cursor."""
         v = content_field.value or ""
         sel_start = content_field.selection_start or len(v)
-        sel_end   = content_field.selection_end   or sel_start
+        sel_end = content_field.selection_end or sel_start
         selecionado = v[sel_start:sel_end] if sel_start != sel_end else placeholder
         novo = v[:sel_start] + antes + selecionado + depois + v[sel_end:]
         content_field.value = novo
@@ -344,24 +415,68 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
     toolbar = ft.Container(
         content=ft.Row(
             [
-                toolbar_btn(ft.Icons.FORMAT_BOLD,          "Negrito (** **)",    lambda _: inserir("**", "**", "negrito")),
-                toolbar_btn(ft.Icons.FORMAT_ITALIC,        "Itálico (* *)",      lambda _: inserir("*",  "*",  "itálico")),
-                toolbar_btn(ft.Icons.FORMAT_STRIKETHROUGH, "Tachado (~~ ~~)",    lambda _: inserir("~~", "~~", "texto")),
+                toolbar_btn(
+                    ft.Icons.FORMAT_BOLD,
+                    "Negrito (** **)",
+                    lambda _: inserir("**", "**", "negrito"),
+                ),
+                toolbar_btn(
+                    ft.Icons.FORMAT_ITALIC,
+                    "Itálico (* *)",
+                    lambda _: inserir("*", "*", "itálico"),
+                ),
+                toolbar_btn(
+                    ft.Icons.FORMAT_STRIKETHROUGH,
+                    "Tachado (~~ ~~)",
+                    lambda _: inserir("~~", "~~", "texto"),
+                ),
                 toolbar_divider(),
                 _tbtn_text("H1", "Título 1", lambda _: inserir("# ", "", "Título")),
                 _tbtn_text("H2", "Título 2", lambda _: inserir("## ", "", "Título")),
                 _tbtn_text("H3", "Título 3", lambda _: inserir("### ", "", "Título")),
                 toolbar_divider(),
-                toolbar_btn(ft.Icons.FORMAT_LIST_BULLETED, "Lista",              lambda _: inserir("- ", "", "item")),
-                toolbar_btn(ft.Icons.FORMAT_LIST_NUMBERED, "Lista numerada",     lambda _: inserir("1. ", "", "item")),
-                toolbar_btn(ft.Icons.CHECK_BOX_OUTLINED,   "Checkbox",           lambda _: inserir("- [ ] ", "", "tarefa")),
+                toolbar_btn(
+                    ft.Icons.FORMAT_LIST_BULLETED,
+                    "Lista",
+                    lambda _: inserir("- ", "", "item"),
+                ),
+                toolbar_btn(
+                    ft.Icons.FORMAT_LIST_NUMBERED,
+                    "Lista numerada",
+                    lambda _: inserir("1. ", "", "item"),
+                ),
+                toolbar_btn(
+                    ft.Icons.CHECK_BOX_OUTLINED,
+                    "Checkbox",
+                    lambda _: inserir("- [ ] ", "", "tarefa"),
+                ),
                 toolbar_divider(),
-                toolbar_btn(ft.Icons.CODE,                 "Código inline",      lambda _: inserir("`", "`", "código")),
-                toolbar_btn(ft.Icons.CODE_ROUNDED,         "Bloco de código",    lambda _: inserir("```\n", "\n```", "código")),
-                toolbar_btn(ft.Icons.FORMAT_QUOTE,         "Citação",            lambda _: inserir("> ", "", "citação")),
+                toolbar_btn(
+                    ft.Icons.CODE,
+                    "Código inline",
+                    lambda _: inserir("`", "`", "código"),
+                ),
+                toolbar_btn(
+                    ft.Icons.CODE_ROUNDED,
+                    "Bloco de código",
+                    lambda _: inserir("```\n", "\n```", "código"),
+                ),
+                toolbar_btn(
+                    ft.Icons.FORMAT_QUOTE,
+                    "Citação",
+                    lambda _: inserir("> ", "", "citação"),
+                ),
                 toolbar_divider(),
-                toolbar_btn(ft.Icons.HORIZONTAL_RULE,      "Separador",          lambda _: inserir("\n---\n", "", "")),
-                toolbar_btn(ft.Icons.LINK_ROUNDED,         "Link",               lambda _: inserir("[", "](url)", "texto")),
+                toolbar_btn(
+                    ft.Icons.HORIZONTAL_RULE,
+                    "Separador",
+                    lambda _: inserir("\n---\n", "", ""),
+                ),
+                toolbar_btn(
+                    ft.Icons.LINK_ROUNDED,
+                    "Link",
+                    lambda _: inserir("[", "](url)", "texto"),
+                ),
                 ft.Container(expand=True),
                 preview_btn,
             ],
@@ -390,7 +505,9 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
     def on_change(e):
         v = content_field.value or ""
         words = len(v.split()) if v.strip() else 0
-        word_count.value = f"{words} palavra{'s' if words != 1 else ''} · {len(v)} chars"
+        word_count.value = (
+            f"{words} palavra{'s' if words != 1 else ''} · {len(v)} chars"
+        )
         word_count.update()
 
     content_field.on_change = on_change
@@ -419,10 +536,13 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
         [
             toolbar,
             ft.Container(
-                content=ft.Stack([
-                    ft.Column([content_field], expand=True),
-                    preview_container,
-                ], expand=True),
+                content=ft.Stack(
+                    [
+                        ft.Column([content_field], expand=True),
+                        preview_container,
+                    ],
+                    expand=True,
+                ),
                 expand=True,
                 border=ft.Border.all(1, BORDER),
                 border_radius=ft.BorderRadius(0, 0, 12, 12),
@@ -438,14 +558,15 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
 
 # ─── APP ─────────────────────────────────────────────────────────────────────
 
-def main(page: ft.Page):
-    page.title      = "My Digital Garden"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor    = BG
-    page.padding    = 0
-    page.scroll     = None
 
-    session   = Session()
+def main(page: ft.Page):
+    page.title = "My Digital Garden"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.bgcolor = BG
+    page.padding = 0
+    page.scroll = None
+
+    session = Session()
     stack_nav = []
     view_state = {"atual": "grid"}
     _modo_salvo = pref_get(session, "sort_modo", "criacao")
@@ -478,12 +599,36 @@ def main(page: ft.Page):
             url = "https://" + url
         webbrowser.open(url)
 
-    # ── AppBar ────────────────────────────────────────────────────────────────
+    # ── AppBar com Pesquisa ────────────────────────────────────────────────────
     main_content = ft.Container(expand=True)
-    appbar_title = ft.Text("My Digital Garden", size=17, weight="w700", color=TEXT,
-                           overflow="ellipsis", expand=True)
-    back_btn = ft.IconButton(ft.Icons.ARROW_BACK_ROUNDED, icon_color=TEXT_SUB,
-                             on_click=lambda _: voltar(), visible=False)
+    appbar_title = ft.Text(
+        "My Digital Garden",
+        size=17,
+        weight="w700",
+        color=TEXT,
+        overflow="ellipsis",
+        expand=True,
+    )
+    back_btn = ft.IconButton(
+        ft.Icons.ARROW_BACK_ROUNDED,
+        icon_color=TEXT_SUB,
+        on_click=lambda _: voltar(),
+        visible=False,
+    )
+
+    # Campo de pesquisa
+    search_field = ft.TextField(
+        hint_text="Pesquisar por título ou tags...",
+        border_color=BORDER,
+        focused_border_color=ACCENT,
+        color=TEXT,
+        hint_style=ft.TextStyle(color=TEXT_DIM),
+        bgcolor=SURFACE,
+        border_radius=10,
+        expand=True,
+        on_change=lambda e: filtrar_itens(e.control.value),
+        prefix_icon=ft.Icon(ft.Icons.SEARCH_ROUNDED, size=18, color=TEXT_SUB),
+    )
 
     sort_btn = ft.PopupMenuButton(
         icon=ft.Icons.SORT_ROUNDED,
@@ -493,31 +638,59 @@ def main(page: ft.Page):
         visible=True,
         items=[
             ft.PopupMenuItem(
-                content=ft.Row([ft.Icon(ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB),
-                                ft.Text("A → Z", size=13, color=TEXT)], spacing=10),
+                content=ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB
+                        ),
+                        ft.Text("A → Z", size=13, color=TEXT),
+                    ],
+                    spacing=10,
+                ),
                 on_click=lambda _: set_sort("az"),
             ),
             ft.PopupMenuItem(
-                content=ft.Row([ft.Icon(ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB),
-                                ft.Text("Z → A", size=13, color=TEXT)], spacing=10),
+                content=ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.SORT_BY_ALPHA_ROUNDED, size=16, color=TEXT_SUB
+                        ),
+                        ft.Text("Z → A", size=13, color=TEXT),
+                    ],
+                    spacing=10,
+                ),
                 on_click=lambda _: set_sort("za"),
             ),
             ft.PopupMenuItem(),
             ft.PopupMenuItem(
-                content=ft.Row([ft.Icon(ft.Icons.SCHEDULE_ROUNDED, size=16, color=TEXT_SUB),
-                                ft.Text("Mais recente", size=13, color=TEXT)], spacing=10),
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.SCHEDULE_ROUNDED, size=16, color=TEXT_SUB),
+                        ft.Text("Mais recente", size=13, color=TEXT),
+                    ],
+                    spacing=10,
+                ),
                 on_click=lambda _: set_sort("recente"),
             ),
             ft.PopupMenuItem(
-                content=ft.Row([ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=TEXT_SUB),
-                                ft.Text("Mais antigo", size=13, color=TEXT)], spacing=10),
+                content=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.HISTORY_ROUNDED, size=16, color=TEXT_SUB),
+                        ft.Text("Mais antigo", size=13, color=TEXT),
+                    ],
+                    spacing=10,
+                ),
                 on_click=lambda _: set_sort("criacao"),
             ),
         ],
     )
 
     appbar = ft.Container(
-        content=ft.Row([back_btn, appbar_title, sort_btn], vertical_alignment="center", spacing=4),
+        content=ft.Row(
+            [back_btn, appbar_title, search_field, sort_btn],
+            vertical_alignment="center",
+            spacing=4,
+        ),
         bgcolor=SURFACE,
         border=ft.Border(bottom=ft.BorderSide(1, BORDER)),
         padding=pad(h=8, v=12),
@@ -526,14 +699,29 @@ def main(page: ft.Page):
 
     def set_appbar(title, show_back=False, show_sort=True):
         appbar_title.value = title
-        back_btn.visible   = show_back
-        sort_btn.visible   = show_sort
+        back_btn.visible = show_back
+        sort_btn.visible = show_sort
         appbar.update()
 
     def set_sort(modo):
         sort_state["modo"] = modo
         pref_set(session, "sort_modo", modo)
-        renderizar_grid()
+        renderizar()
+
+    # ── Função de Filtragem ───────────────────────────────────────────────────
+    def filtrar_itens(texto):
+        if not texto:
+            renderizar()
+            return
+
+        itens = session.query(Item).filter_by(pai_id=pai_id()).all()
+        itens_filtrados = [
+            item
+            for item in itens
+            if texto.lower() in item.titulo.lower()
+            or any(texto.lower() in tag.lower() for tag in (item.tags or []))
+        ]
+        renderizar_grid(itens_filtrados)
 
     # ── DRAG & DROP ───────────────────────────────────────────────────────────
     def on_drag_complete(src_id, tgt_id):
@@ -543,10 +731,12 @@ def main(page: ft.Page):
         if not src or not tgt or src.id == tgt.id:
             return
         # Reordena todos os itens do mesmo nível
-        itens = (session.query(Item)
-                 .filter_by(pai_id=src.pai_id)
-                 .order_by(Item.ordem, Item.id)
-                 .all())
+        itens = (
+            session.query(Item)
+            .filter_by(pai_id=src.pai_id)
+            .order_by(Item.ordem, Item.id)
+            .all()
+        )
         ids = [i.id for i in itens]
         if src.id not in ids or tgt.id not in ids:
             return
@@ -561,25 +751,24 @@ def main(page: ft.Page):
         renderizar()
 
     # ── GRID ──────────────────────────────────────────────────────────────────
-    def renderizar_grid():
+    def renderizar_grid(itens=None):
         set_appbar(pasta_atual_nome(), show_back=bool(stack_nav))
         page.floating_action_button.visible = True
 
-        from sqlalchemy import asc, desc
+        itens = itens or session.query(Item).filter_by(pai_id=pai_id()).all()
         modo = sort_state["modo"]
-        q = session.query(Item).filter_by(pai_id=pai_id())
         if modo == "az":
-            q = q.order_by(asc(Item.titulo))
+            itens = sorted(itens, key=lambda x: x.titulo)
         elif modo == "za":
-            q = q.order_by(desc(Item.titulo))
+            itens = sorted(itens, key=lambda x: x.titulo, reverse=True)
         elif modo == "recente":
-            q = q.order_by(desc(Item.data_criacao), desc(Item.id))
+            itens = sorted(itens, key=lambda x: x.data_criacao, reverse=True)
         else:  # criacao (mais antigo)
-            q = q.order_by(asc(Item.data_criacao), asc(Item.id))
-        itens = q.all()
+            itens = sorted(itens, key=lambda x: x.data_criacao)
+
         pastas = [i for i in itens if i.tipo == "Pasta"]
-        links  = [i for i in itens if i.tipo == "Link"]
-        notas  = [i for i in itens if i.tipo == "Nota"]
+        links = [i for i in itens if i.tipo == "Link"]
+        notas = [i for i in itens if i.tipo == "Nota"]
 
         sections = []
 
@@ -587,39 +776,65 @@ def main(page: ft.Page):
             col = ft.Column(spacing=8)
             for it in items:
                 col.controls.append(
-                    build_list_item(it, _click_item, _editar, _excluir,
-                                    on_drag_complete, items)
+                    build_list_item(
+                        it, _click_item, _editar, _excluir, on_drag_complete, items
+                    )
                 )
             return col
 
         if pastas:
-            sections += [section_title("PASTAS"), ft.Container(height=6),
-                         make_list(pastas), ft.Container(height=16)]
+            sections += [
+                section_title("PASTAS"),
+                ft.Container(height=6),
+                make_list(pastas),
+                ft.Container(height=16),
+            ]
         if links:
-            sections += [section_title("LINKS"),  ft.Container(height=6),
-                         make_list(links),  ft.Container(height=16)]
+            sections += [
+                section_title("LINKS"),
+                ft.Container(height=6),
+                make_list(links),
+                ft.Container(height=16),
+            ]
         if notas:
-            sections += [section_title("NOTAS"),  ft.Container(height=6),
-                         make_list(notas)]
+            sections += [
+                section_title("NOTAS"),
+                ft.Container(height=6),
+                make_list(notas),
+            ]
 
         if not itens:
-            sections = [ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Container(height=60),
-                        ft.Icon(ft.Icons.YARD_ROUNDED, size=64, color=TEXT_DIM),
-                        ft.Container(height=16),
-                        ft.Text("Jardim vazio", size=18, color=TEXT_SUB,
-                                weight="w600", text_align="center"),
-                        ft.Text("Toque em + para adicionar\npastas, links ou notas.",
-                                size=13, color=TEXT_DIM, text_align="center"),
-                    ],
-                    horizontal_alignment="center",
-                ),
-            )]
+            sections = [
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Container(height=60),
+                            ft.Icon(ft.Icons.YARD_ROUNDED, size=64, color=TEXT_DIM),
+                            ft.Container(height=16),
+                            ft.Text(
+                                "Jardim vazio",
+                                size=18,
+                                color=TEXT_SUB,
+                                weight="w600",
+                                text_align="center",
+                            ),
+                            ft.Text(
+                                "Toque em + para adicionar\npastas, links ou notas.",
+                                size=13,
+                                color=TEXT_DIM,
+                                text_align="center",
+                            ),
+                        ],
+                        horizontal_alignment="center",
+                    ),
+                )
+            ]
 
         main_content.content = ft.Column(
-            sections, scroll="auto", expand=True, spacing=0,
+            sections,
+            scroll="auto",
+            expand=True,
+            spacing=0,
         )
         page.update()
 
@@ -639,23 +854,32 @@ def main(page: ft.Page):
 
         main_content.content = ft.Column(
             [
-                ft.Row([
-                    ft.Container(expand=True),
-                    ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=TEXT_SUB,
-                                  on_click=lambda _: mostrar_editor(item, "Nota"),
-                                  tooltip="Editar"),
-                ]),
+                ft.Row(
+                    [
+                        ft.Container(expand=True),
+                        ft.IconButton(
+                            ft.Icons.EDIT_ROUNDED,
+                            icon_color=TEXT_SUB,
+                            on_click=lambda _: mostrar_editor(item, "Nota"),
+                            tooltip="Editar",
+                        ),
+                    ]
+                ),
                 ft.Column(
-                    [ft.Markdown(
-                        item.conteudo or "_Nota vazia._",
-                        selectable=True,
-                        extension_set="gitHubFlavored",
-                        code_theme="atom-one-dark",
-                    )],
-                    scroll="auto", expand=True,
+                    [
+                        ft.Markdown(
+                            item.conteudo or "_Nota vazia._",
+                            selectable=True,
+                            extension_set="gitHubFlavored",
+                            code_theme="atom-one-dark",
+                        )
+                    ],
+                    scroll="auto",
+                    expand=True,
                 ),
             ],
-            expand=True, spacing=0,
+            expand=True,
+            spacing=0,
         )
         page.update()
 
@@ -663,7 +887,7 @@ def main(page: ft.Page):
     def mostrar_editor(item_existente=None, tipo="Nota"):
         view_state["atual"] = "editor"
         is_nota = tipo == "Nota"
-        header  = ("Editar" if item_existente else "Novo") + f" {tipo}"
+        header = ("Editar" if item_existente else "Novo") + f" {tipo}"
         set_appbar(header, show_back=True, show_sort=False)
         page.floating_action_button.visible = False
 
@@ -671,9 +895,26 @@ def main(page: ft.Page):
             label="Titulo",
             value=item_existente.titulo if item_existente else "",
             autofocus=not is_nota,
-            border_color=BORDER, focused_border_color=ACCENT,
-            color=TEXT, label_style=ft.TextStyle(color=TEXT_SUB),
-            bgcolor=SURFACE, border_radius=10,
+            border_color=BORDER,
+            focused_border_color=ACCENT,
+            color=TEXT,
+            label_style=ft.TextStyle(color=TEXT_SUB),
+            bgcolor=SURFACE,
+            border_radius=10,
+        )
+
+        # Campo de tags
+        tags_input = ft.TextField(
+            label="Tags (separadas por vírgula)",
+            value=", ".join(item_existente.tags)
+            if item_existente and item_existente.tags
+            else "",
+            border_color=BORDER,
+            focused_border_color=ACCENT,
+            color=TEXT,
+            label_style=ft.TextStyle(color=TEXT_SUB),
+            bgcolor=SURFACE,
+            border_radius=10,
         )
 
         if is_nota:
@@ -683,14 +924,28 @@ def main(page: ft.Page):
                     titulo_input.error_text = "Campo obrigatorio"
                     titulo_input.update()
                     return
+                tags = (
+                    [tag.strip() for tag in tags_input.value.split(",")]
+                    if tags_input.value
+                    else []
+                )
                 if item_existente:
-                    item_existente.titulo   = titulo_input.value.strip()
+                    item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = content
+                    item_existente.tags = tags
                 else:
                     import time
-                    session.add(Item(titulo=titulo_input.value.strip(),
-                                     conteudo=content, tipo=tipo, pai_id=pai_id(),
-                                     data_criacao=int(time.time())))
+
+                    session.add(
+                        Item(
+                            titulo=titulo_input.value.strip(),
+                            conteudo=content,
+                            tipo=tipo,
+                            pai_id=pai_id(),
+                            data_criacao=int(time.time()),
+                            tags=tags,
+                        )
+                    )
                 session.commit()
                 view_state["atual"] = "grid"
                 renderizar()
@@ -705,10 +960,14 @@ def main(page: ft.Page):
                 [
                     ft.Container(height=8),
                     titulo_input,
+                    ft.Container(height=8),
+                    tags_input,
                     ft.Container(height=12),
                     editor_widget,
                 ],
-                expand=True, spacing=0, scroll="auto",
+                expand=True,
+                spacing=0,
+                scroll="auto",
             )
 
         else:
@@ -716,9 +975,12 @@ def main(page: ft.Page):
             conteudo_input = ft.TextField(
                 label="URL",
                 value=item_existente.conteudo if item_existente else "",
-                border_color=BORDER, focused_border_color=ACCENT,
-                color=TEXT, label_style=ft.TextStyle(color=TEXT_SUB),
-                bgcolor=SURFACE, border_radius=10,
+                border_color=BORDER,
+                focused_border_color=ACCENT,
+                color=TEXT,
+                label_style=ft.TextStyle(color=TEXT_SUB),
+                bgcolor=SURFACE,
+                border_radius=10,
                 keyboard_type=ft.KeyboardType.URL,
             )
 
@@ -727,15 +989,28 @@ def main(page: ft.Page):
                     titulo_input.error_text = "Campo obrigatorio"
                     titulo_input.update()
                     return
+                tags = (
+                    [tag.strip() for tag in tags_input.value.split(",")]
+                    if tags_input.value
+                    else []
+                )
                 if item_existente:
-                    item_existente.titulo   = titulo_input.value.strip()
+                    item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = conteudo_input.value
+                    item_existente.tags = tags
                 else:
                     import time
-                    session.add(Item(titulo=titulo_input.value.strip(),
-                                     conteudo=conteudo_input.value,
-                                     tipo=tipo, pai_id=pai_id(),
-                                     data_criacao=int(time.time())))
+
+                    session.add(
+                        Item(
+                            titulo=titulo_input.value.strip(),
+                            conteudo=conteudo_input.value,
+                            tipo=tipo,
+                            pai_id=pai_id(),
+                            data_criacao=int(time.time()),
+                            tags=tags,
+                        )
+                    )
                 session.commit()
                 view_state["atual"] = "grid"
                 renderizar()
@@ -745,31 +1020,52 @@ def main(page: ft.Page):
                 [
                     ft.Container(height=8),
                     ft.Container(
-                        content=ft.Row([
-                            ft.Container(content=ft.Icon(icone_tipo(tipo), size=16, color=cor_btn),
-                                         bgcolor=cor_bg, border_radius=8, padding=8),
-                            ft.Text(header, size=15, weight="w600", color=TEXT_SUB),
-                        ], spacing=10), padding=pad(b=4),
+                        content=ft.Row(
+                            [
+                                ft.Container(
+                                    content=ft.Icon(
+                                        icone_tipo(tipo), size=16, color=cor_btn
+                                    ),
+                                    bgcolor=cor_bg,
+                                    border_radius=8,
+                                    padding=8,
+                                ),
+                                ft.Text(header, size=15, weight="w600", color=TEXT_SUB),
+                            ],
+                            spacing=10,
+                        ),
+                        padding=pad(b=4),
                     ),
                     divider(),
                     ft.Container(height=16),
                     titulo_input,
+                    ft.Container(height=8),
+                    tags_input,
                     ft.Container(height=12),
                     conteudo_input,
                     ft.Container(height=24),
-                    ft.Row([
-                        ft.Container(expand=True),
-                        ft.OutlinedButton("Cancelar",
-                                          style=ft.ButtonStyle(color=TEXT_SUB),
-                                          on_click=lambda _: voltar()),
-                        ft.Container(width=8),
-                        ft.FilledButton("Guardar", icon=ft.Icons.SAVE_ROUNDED,
-                                        style=ft.ButtonStyle(bgcolor=ACCENT, color=WHITE),
-                                        on_click=salvar),
-                    ]),
+                    ft.Row(
+                        [
+                            ft.Container(expand=True),
+                            ft.OutlinedButton(
+                                "Cancelar",
+                                style=ft.ButtonStyle(color=TEXT_SUB),
+                                on_click=lambda _: voltar(),
+                            ),
+                            ft.Container(width=8),
+                            ft.FilledButton(
+                                "Guardar",
+                                icon=ft.Icons.SAVE_ROUNDED,
+                                style=ft.ButtonStyle(bgcolor=ACCENT, color=WHITE),
+                                on_click=salvar,
+                            ),
+                        ]
+                    ),
                     ft.Container(height=32),
                 ],
-                scroll="auto", expand=True, spacing=0,
+                scroll="auto",
+                expand=True,
+                spacing=0,
             )
 
         page.update()
@@ -788,14 +1084,17 @@ def main(page: ft.Page):
 
         dlg = ft.AlertDialog(
             title=ft.Text("Excluir item?", color=TEXT),
-            content=ft.Text(f'"{item.titulo}" sera removido permanentemente.',
-                            color=TEXT_SUB),
+            content=ft.Text(
+                f'"{item.titulo}" sera removido permanentemente.', color=TEXT_SUB
+            ),
             bgcolor=SURFACE,
             actions=[
                 ft.TextButton("Cancelar", on_click=fechar),
-                ft.FilledButton("Excluir",
-                                style=ft.ButtonStyle(bgcolor=RED, color=WHITE),
-                                on_click=confirmar),
+                ft.FilledButton(
+                    "Excluir",
+                    style=ft.ButtonStyle(bgcolor=RED, color=WHITE),
+                    on_click=confirmar,
+                ),
             ],
         )
         page.overlay.append(dlg)
@@ -808,19 +1107,31 @@ def main(page: ft.Page):
     # ── NOVA PASTA ────────────────────────────────────────────────────────────
     def nova_pasta():
         tf = ft.TextField(
-            label="Nome da pasta", autofocus=True,
-            border_color=BORDER, focused_border_color=ACCENT,
-            color=TEXT, label_style=ft.TextStyle(color=TEXT_SUB),
-            bgcolor=SURFACE, border_radius=10,
+            label="Nome da pasta",
+            autofocus=True,
+            border_color=BORDER,
+            focused_border_color=ACCENT,
+            color=TEXT,
+            label_style=ft.TextStyle(color=TEXT_SUB),
+            bgcolor=SURFACE,
+            border_radius=10,
         )
 
         def criar(e):
             if tf.value.strip():
                 total = session.query(Item).filter_by(pai_id=pai_id()).count()
                 import time
-                session.add(Item(titulo=tf.value.strip(), tipo="Pasta",
-                                 pai_id=pai_id(), ordem=total,
-                                 data_criacao=int(time.time())))
+
+                session.add(
+                    Item(
+                        titulo=tf.value.strip(),
+                        tipo="Pasta",
+                        pai_id=pai_id(),
+                        ordem=total,
+                        data_criacao=int(time.time()),
+                        tags=[],
+                    )
+                )
                 session.commit()
                 dlg.open = False
                 renderizar()
@@ -830,14 +1141,22 @@ def main(page: ft.Page):
             page.update()
 
         dlg = ft.AlertDialog(
-            title=ft.Row([ft.Icon(ft.Icons.FOLDER_ROUNDED, color=ACCENT, size=20),
-                          ft.Text("Nova Pasta", color=TEXT, weight="w600")], spacing=8),
+            title=ft.Row(
+                [
+                    ft.Icon(ft.Icons.FOLDER_ROUNDED, color=ACCENT, size=20),
+                    ft.Text("Nova Pasta", color=TEXT, weight="w600"),
+                ],
+                spacing=8,
+            ),
             content=ft.Container(tf, width=400),
             bgcolor=SURFACE,
             actions=[
                 ft.TextButton("Cancelar", on_click=fechar),
-                ft.FilledButton("Criar", style=ft.ButtonStyle(bgcolor=ACCENT, color=WHITE),
-                                on_click=criar),
+                ft.FilledButton(
+                    "Criar",
+                    style=ft.ButtonStyle(bgcolor=ACCENT, color=WHITE),
+                    on_click=criar,
+                ),
             ],
         )
         page.overlay.append(dlg)
@@ -851,14 +1170,25 @@ def main(page: ft.Page):
             e.control.update()
 
         return ft.Container(
-            content=ft.Row([
-                ft.Container(content=ft.Icon(icon, size=20, color=cor),
-                             bgcolor=chip_cor(label)[1], border_radius=10, padding=10,
-                             width=44, height=44),
-                ft.Text(label, size=15, weight="w500", color=TEXT),
-            ], spacing=16, vertical_alignment="center"),
-            on_click=fn, border_radius=12,
-            padding=pad(h=8, v=10), on_hover=hover,
+            content=ft.Row(
+                [
+                    ft.Container(
+                        content=ft.Icon(icon, size=20, color=cor),
+                        bgcolor=chip_cor(label)[1],
+                        border_radius=10,
+                        padding=10,
+                        width=44,
+                        height=44,
+                    ),
+                    ft.Text(label, size=15, weight="w500", color=TEXT),
+                ],
+                spacing=16,
+                vertical_alignment="center",
+            ),
+            on_click=fn,
+            border_radius=12,
+            padding=pad(h=8, v=10),
+            on_hover=hover,
         )
 
     def _bs_fechar(fn):
@@ -871,26 +1201,48 @@ def main(page: ft.Page):
             content=ft.Column(
                 [
                     ft.Container(
-                        content=ft.Container(width=40, height=4, bgcolor=BORDER, border_radius=2),
+                        content=ft.Container(
+                            width=40, height=4, bgcolor=BORDER, border_radius=2
+                        ),
                         alignment=ft.alignment.Alignment(0, 0),
                         padding=pad(t=14, b=10),
                     ),
-                    ft.Text("Adicionar", size=14, color=TEXT_SUB, weight="w700",
-                            text_align="center"),
+                    ft.Text(
+                        "Adicionar",
+                        size=14,
+                        color=TEXT_SUB,
+                        weight="w700",
+                        text_align="center",
+                    ),
                     ft.Container(height=8),
-                    _menu_tile(ft.Icons.FOLDER_ROUNDED,      "Pasta", ACCENT,
-                               lambda _: _bs_fechar(nova_pasta)),
-                    _menu_tile(ft.Icons.OPEN_IN_NEW_ROUNDED, "Link",  ACCENT2,
-                               lambda _: _bs_fechar(lambda: mostrar_editor(tipo="Link"))),
-                    _menu_tile(ft.Icons.ARTICLE_ROUNDED,     "Nota",  GREEN,
-                               lambda _: _bs_fechar(lambda: mostrar_editor(tipo="Nota"))),
+                    _menu_tile(
+                        ft.Icons.FOLDER_ROUNDED,
+                        "Pasta",
+                        ACCENT,
+                        lambda _: _bs_fechar(nova_pasta),
+                    ),
+                    _menu_tile(
+                        ft.Icons.OPEN_IN_NEW_ROUNDED,
+                        "Link",
+                        ACCENT2,
+                        lambda _: _bs_fechar(lambda: mostrar_editor(tipo="Link")),
+                    ),
+                    _menu_tile(
+                        ft.Icons.ARTICLE_ROUNDED,
+                        "Nota",
+                        GREEN,
+                        lambda _: _bs_fechar(lambda: mostrar_editor(tipo="Nota")),
+                    ),
                     ft.Container(height=20),
                 ],
-                tight=True, spacing=2, horizontal_alignment="stretch",
+                tight=True,
+                spacing=2,
+                horizontal_alignment="stretch",
             ),
             bgcolor=SURFACE,
-            border_radius=ft.BorderRadius(top_left=20, top_right=20,
-                                          bottom_left=0, bottom_right=0),
+            border_radius=ft.BorderRadius(
+                top_left=20, top_right=20, bottom_left=0, bottom_right=0
+            ),
             padding=pad(h=20),
         )
     )
@@ -913,15 +1265,16 @@ def main(page: ft.Page):
                     padding=pad(h=16, t=16, b=80),
                 ),
             ],
-            expand=True, spacing=0,
+            expand=True,
+            spacing=0,
         )
     )
-
-    renderizar_grid()
 
     def renderizar():
         if view_state["atual"] == "grid":
             renderizar_grid()
+
+    renderizar()
 
 
 if __name__ == "__main__":
