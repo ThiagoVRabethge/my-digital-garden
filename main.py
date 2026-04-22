@@ -8,12 +8,24 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import flet as ft
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Column, ForeignKey, Integer, String, Table, Text, create_engine
 from sqlalchemy.orm import backref, declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
 engine = create_engine("sqlite:///vault.db")
 Session = sessionmaker(bind=engine)
+
+# Tabela de associação Item <-> Tag
+item_tag = Table(
+    "item_tag",
+    Base.metadata,
+    Column(
+        "item_id", Integer, ForeignKey("itens.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    ),
+)
 
 
 class Item(Base):
@@ -24,12 +36,21 @@ class Item(Base):
     tipo = Column(String(20))
     pai_id = Column(Integer, ForeignKey("itens.id"), nullable=True)
     ordem = Column(Integer, default=0)
-    data_criacao = Column(Integer, default=0)  # timestamp unix
+    data_criacao = Column(Integer, default=0)
     filhos = relationship(
         "Item",
         backref=backref("pai", remote_side=[id]),
         cascade="all, delete-orphan",
     )
+    tags = relationship("Tag", secondary=item_tag, back_populates="itens")
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String(50), nullable=False, unique=True)
+    cor = Column(String(10), default="#7C6AF7")
+    itens = relationship("Item", secondary=item_tag, back_populates="tags")
 
 
 class Preferencia(Base):
@@ -65,12 +86,16 @@ BORDER = "#2A2A35"
 ACCENT = "#7C6AF7"
 ACCENT2 = "#4FC3F7"
 GREEN = "#56D6A0"
+YELLOW = "#F7C86A"
+PINK = "#F76A9E"
 TEXT = "#E8E8F0"
 TEXT_SUB = "#6B6B80"
 TEXT_DIM = "#3D3D50"
 WHITE = "#FFFFFF"
 RED = "#C0392B"
 TOOLBAR = "#18181D"
+
+TAG_CORES = [ACCENT, ACCENT2, GREEN, YELLOW, PINK, "#F7956A", "#A0F76A", "#6AF7E8"]
 
 
 def chip_cor(tipo):
@@ -99,6 +124,39 @@ def pad(a=0, t=None, r=None, b=None, h=None, v=None):
 
 def divider():
     return ft.Container(height=1, bgcolor=BORDER)
+
+
+def _tag_bg(hex_color):
+    """Gera background com ~12% de opacidade a partir de uma cor hex."""
+    h = hex_color.lstrip("#")
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"#{20:02x}{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return "#1E1B3A"
+
+
+def tag_chip(tag, on_remove=None, small=False):
+    """Chip de tag. on_remove exibe botão X."""
+    size = 10 if small else 12
+    cor = tag.cor or ACCENT
+    bg = _tag_bg(cor)
+
+    children = [ft.Text(f"#{tag.nome}", size=size, color=cor, weight="w600")]
+    if on_remove:
+        children.append(
+            ft.GestureDetector(
+                content=ft.Icon(ft.Icons.CLOSE_ROUNDED, size=12, color=cor),
+                on_tap=lambda e, t=tag: on_remove(t),
+            )
+        )
+
+    return ft.Container(
+        content=ft.Row(children, spacing=3, tight=True),
+        bgcolor=bg,
+        border_radius=20,
+        padding=pad(h=8, v=3),
+    )
 
 
 # ─── DRAG & DROP LIST ITEM ────────────────────────────────────────────────────
@@ -145,6 +203,26 @@ def build_list_item(
         ],
     )
 
+    text_col_children = [
+        ft.Text(
+            item.titulo,
+            size=15,
+            weight="w600",
+            color=TEXT,
+            max_lines=1,
+            overflow="ellipsis",
+        ),
+    ]
+    if preview:
+        text_col_children.append(
+            ft.Text(preview, size=12, color=TEXT_SUB, max_lines=1, overflow="ellipsis")
+        )
+    if item.tipo == "Nota" and item.tags:
+        text_col_children.append(ft.Container(height=4))
+        text_col_children.append(
+            ft.Row([tag_chip(t, small=True) for t in item.tags[:4]], spacing=4)
+        )
+
     card_content = ft.Row(
         [
             ft.Container(
@@ -162,30 +240,7 @@ def build_list_item(
                 height=44,
             ),
             ft.Container(width=12),
-            ft.Column(
-                [
-                    ft.Text(
-                        item.titulo,
-                        size=15,
-                        weight="w600",
-                        color=TEXT,
-                        max_lines=1,
-                        overflow="ellipsis",
-                    ),
-                    ft.Text(
-                        preview,
-                        size=12,
-                        color=TEXT_SUB,
-                        max_lines=1,
-                        overflow="ellipsis",
-                    )
-                    if preview
-                    else ft.Container(height=0),
-                ],
-                spacing=2,
-                expand=True,
-                alignment="center",
-            ),
+            ft.Column(text_col_children, spacing=2, expand=True, alignment="center"),
             ft.Container(width=4),
             menu,
         ],
@@ -211,9 +266,8 @@ def build_list_item(
             src_id = int(e.data)
         except (AttributeError, ValueError, TypeError):
             return
-        tgt_id = item.id
-        if src_id != tgt_id:
-            on_drag_complete(src_id, tgt_id)
+        if src_id != item.id:
+            on_drag_complete(src_id, item.id)
 
     def on_leave(e):
         e.control.content.border = None
@@ -227,7 +281,7 @@ def build_list_item(
         on_leave=on_leave,
     )
 
-    draggable = ft.Draggable(
+    return ft.Draggable(
         group="items",
         data=str(item.id),
         content=drop_target,
@@ -260,8 +314,6 @@ def build_list_item(
             shadow=ft.BoxShadow(blur_radius=20, color="#44000000"),
         ),
     )
-
-    return draggable
 
 
 def section_title(text):
@@ -314,8 +366,7 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
     mode = {"preview": False}
 
     def atualizar_preview():
-        md = preview_col.controls[0]
-        md.value = content_field.value or "_Comece a escrever..._"
+        preview_col.controls[0].value = content_field.value or "_Comece a escrever..._"
         preview_col.update()
 
     def toggle_preview(e):
@@ -334,15 +385,14 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
 
     def inserir(antes, depois="", placeholder="texto"):
         v = content_field.value or ""
-        sel_start = content_field.selection_start or len(v)
-        sel_end = content_field.selection_end or sel_start
-        selecionado = v[sel_start:sel_end] if sel_start != sel_end else placeholder
-        novo = v[:sel_start] + antes + selecionado + depois + v[sel_end:]
-        content_field.value = novo
+        s = content_field.selection_start or len(v)
+        e = content_field.selection_end or s
+        sel = v[s:e] if s != e else placeholder
+        content_field.value = v[:s] + antes + sel + depois + v[e:]
         content_field.update()
         content_field.focus()
 
-    def _tbtn_text(label, tooltip, fn):
+    def tbtn(label, tooltip, fn):
         return ft.TextButton(
             label,
             tooltip=tooltip,
@@ -354,10 +404,10 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
             ),
         )
 
-    def toolbar_btn(icon, tooltip, fn, color=TEXT_SUB):
+    def ibtn(icon, tooltip, fn):
         return ft.IconButton(
             icon=icon,
-            icon_color=color,
+            icon_color=TEXT_SUB,
             icon_size=18,
             tooltip=tooltip,
             on_click=fn,
@@ -367,7 +417,7 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
             ),
         )
 
-    def toolbar_divider():
+    def tdiv():
         return ft.Container(width=1, height=20, bgcolor=BORDER, margin=pad(h=2))
 
     preview_btn = ft.IconButton(
@@ -377,72 +427,71 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
         tooltip="Preview",
         on_click=toggle_preview,
         style=ft.ButtonStyle(
-            padding=ft.Padding(6, 6, 6, 6),
-            shape=ft.RoundedRectangleBorder(radius=6),
+            padding=ft.Padding(6, 6, 6, 6), shape=ft.RoundedRectangleBorder(radius=6)
         ),
     )
 
     toolbar = ft.Container(
         content=ft.Row(
             [
-                toolbar_btn(
+                ibtn(
                     ft.Icons.FORMAT_BOLD,
-                    "Negrito (** **)",
+                    "Negrito",
                     lambda _: inserir("**", "**", "negrito"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.FORMAT_ITALIC,
-                    "Itálico (* *)",
+                    "Itálico",
                     lambda _: inserir("*", "*", "itálico"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.FORMAT_STRIKETHROUGH,
-                    "Tachado (~~ ~~)",
+                    "Tachado",
                     lambda _: inserir("~~", "~~", "texto"),
                 ),
-                toolbar_divider(),
-                _tbtn_text("H1", "Título 1", lambda _: inserir("# ", "", "Título")),
-                _tbtn_text("H2", "Título 2", lambda _: inserir("## ", "", "Título")),
-                _tbtn_text("H3", "Título 3", lambda _: inserir("### ", "", "Título")),
-                toolbar_divider(),
-                toolbar_btn(
+                tdiv(),
+                tbtn("H1", "Título 1", lambda _: inserir("# ", "", "Título")),
+                tbtn("H2", "Título 2", lambda _: inserir("## ", "", "Título")),
+                tbtn("H3", "Título 3", lambda _: inserir("### ", "", "Título")),
+                tdiv(),
+                ibtn(
                     ft.Icons.FORMAT_LIST_BULLETED,
                     "Lista",
                     lambda _: inserir("- ", "", "item"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.FORMAT_LIST_NUMBERED,
                     "Lista numerada",
                     lambda _: inserir("1. ", "", "item"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.CHECK_BOX_OUTLINED,
                     "Checkbox",
                     lambda _: inserir("- [ ] ", "", "tarefa"),
                 ),
-                toolbar_divider(),
-                toolbar_btn(
+                tdiv(),
+                ibtn(
                     ft.Icons.CODE,
                     "Código inline",
                     lambda _: inserir("`", "`", "código"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.CODE_ROUNDED,
                     "Bloco de código",
                     lambda _: inserir("```\n", "\n```", "código"),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.FORMAT_QUOTE,
                     "Citação",
                     lambda _: inserir("> ", "", "citação"),
                 ),
-                toolbar_divider(),
-                toolbar_btn(
+                tdiv(),
+                ibtn(
                     ft.Icons.HORIZONTAL_RULE,
                     "Separador",
-                    lambda _: inserir("\n---\n", "", ""),
+                    lambda _: inserir("\n---\n", ""),
                 ),
-                toolbar_btn(
+                ibtn(
                     ft.Icons.LINK_ROUNDED,
                     "Link",
                     lambda _: inserir("[", "](url)", "texto"),
@@ -465,10 +514,8 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
 
     def on_change(e):
         v = content_field.value or ""
-        words = len(v.split()) if v.strip() else 0
-        word_count.value = (
-            f"{words} palavra{'s' if words != 1 else ''} · {len(v)} chars"
-        )
+        w = len(v.split()) if v.strip() else 0
+        word_count.value = f"{w} palavra{'s' if w != 1 else ''} · {len(v)} chars"
         word_count.update()
 
     content_field.on_change = on_change
@@ -530,8 +577,8 @@ def main(page: ft.Page):
     session = Session()
     stack_nav = []
     view_state = {"atual": "grid"}
-    _modo_salvo = pref_get(session, "sort_modo", "criacao")
-    sort_state = {"modo": _modo_salvo}
+    sort_state = {"modo": pref_get(session, "sort_modo", "criacao")}
+    search_state = {"ativo": False, "query": ""}
 
     def pai_id():
         return stack_nav[-1].id if stack_nav else None
@@ -545,6 +592,7 @@ def main(page: ft.Page):
         elif pasta not in stack_nav:
             stack_nav.append(pasta)
         view_state["atual"] = "grid"
+        _fechar_busca(update=False)
         renderizar()
 
     def voltar():
@@ -563,7 +611,7 @@ def main(page: ft.Page):
     # ── Controles principais ──────────────────────────────────────────────────
     main_content = ft.Container(expand=True)
 
-    # ── AppBar superior (apenas título + sort, SEM botão voltar) ─────────────
+    # ── AppBar ────────────────────────────────────────────────────────────────
     appbar_title = ft.Text(
         "My Digital Garden",
         size=17,
@@ -571,6 +619,38 @@ def main(page: ft.Page):
         color=TEXT,
         overflow="ellipsis",
         expand=True,
+    )
+
+    search_field = ft.TextField(
+        hint_text="Buscar notas, links, tags...",
+        hint_style=ft.TextStyle(color=TEXT_DIM, size=14),
+        border=ft.InputBorder.NONE,
+        color=TEXT,
+        bgcolor="transparent",
+        cursor_color=ACCENT,
+        text_style=ft.TextStyle(size=14),
+        expand=True,
+        content_padding=pad(h=4, v=0),
+        autofocus=True,
+        on_change=lambda e: _on_search_change(e.control.value),
+    )
+
+    search_row = ft.Row(
+        [
+            ft.Icon(ft.Icons.SEARCH_ROUNDED, color=TEXT_SUB, size=20),
+            search_field,
+            ft.IconButton(
+                ft.Icons.CLOSE_ROUNDED,
+                icon_color=TEXT_SUB,
+                icon_size=18,
+                on_click=lambda _: _fechar_busca(),
+                style=ft.ButtonStyle(padding=ft.Padding(4, 4, 4, 4)),
+            ),
+        ],
+        vertical_alignment="center",
+        spacing=8,
+        expand=True,
+        visible=False,
     )
 
     sort_btn = ft.PopupMenuButton(
@@ -628,11 +708,30 @@ def main(page: ft.Page):
         ],
     )
 
+    search_btn = ft.IconButton(
+        ft.Icons.SEARCH_ROUNDED,
+        icon_color=TEXT_SUB,
+        icon_size=20,
+        tooltip="Buscar",
+        on_click=lambda _: _abrir_busca(),
+        style=ft.ButtonStyle(padding=ft.Padding(8, 8, 8, 8)),
+    )
+
+    appbar_normal = ft.Row(
+        [appbar_title, search_btn, sort_btn],
+        vertical_alignment="center",
+        spacing=4,
+        expand=True,
+    )
+    # Container para a barra de busca que sobrepõe o normal
+    appbar_search_wrap = ft.Container(content=search_row, expand=True, visible=False)
+
     appbar = ft.Container(
-        content=ft.Row(
-            [appbar_title, sort_btn],
-            vertical_alignment="center",
-            spacing=4,
+        content=ft.Stack(
+            [
+                ft.Container(content=appbar_normal, expand=True),
+                appbar_search_wrap,
+            ]
         ),
         bgcolor=SURFACE,
         border=ft.Border(bottom=ft.BorderSide(1, BORDER)),
@@ -640,8 +739,35 @@ def main(page: ft.Page):
         height=56,
     )
 
-    # ── Bottom Navigation Bar ─────────────────────────────────────────────────
-    # FAB central (botão +)
+    def _abrir_busca():
+        search_state["ativo"] = True
+        search_state["query"] = ""
+        search_field.value = ""
+        appbar_normal.visible = False
+        appbar_search_wrap.visible = True
+        search_row.visible = True
+        appbar.update()
+        renderizar_grid()
+
+    def _fechar_busca(update=True):
+        search_state["ativo"] = False
+        search_state["query"] = ""
+        search_field.value = ""
+        appbar_normal.visible = True
+        appbar_search_wrap.visible = False
+        search_row.visible = False
+        if update:
+            try:
+                appbar.update()
+                renderizar_grid()
+            except Exception:
+                pass
+
+    def _on_search_change(query):
+        search_state["query"] = query.lower().strip()
+        renderizar_grid()
+
+    # ── Bottom Bar ────────────────────────────────────────────────────────────
     fab_btn = ft.Container(
         content=ft.Icon(ft.Icons.ADD_ROUNDED, color=WHITE, size=28),
         bgcolor=ACCENT,
@@ -650,27 +776,23 @@ def main(page: ft.Page):
         border_radius=28,
         alignment=ft.alignment.Alignment(0, 0),
         shadow=ft.BoxShadow(blur_radius=16, color="#557C6AF7", offset=ft.Offset(0, 4)),
-        on_click=None,  # definido depois
+        on_click=None,
     )
-
-    # Botão Voltar (lado esquerdo da bottom bar)
-    back_label = ft.Text("Voltar", size=11, color=TEXT_SUB)
-    back_icon = ft.Icon(ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, size=20, color=TEXT_SUB)
 
     back_btn = ft.Container(
         content=ft.Column(
-            [back_icon, back_label],
+            [
+                ft.Icon(ft.Icons.ARROW_BACK_IOS_NEW_ROUNDED, size=20, color=TEXT_SUB),
+                ft.Text("Voltar", size=11, color=TEXT_SUB),
+            ],
             horizontal_alignment="center",
             spacing=2,
         ),
         on_click=lambda _: voltar(),
         padding=pad(h=16, v=8),
         border_radius=12,
-        visible=False,  # só aparece quando há algo para voltar
+        visible=False,
     )
-
-    # Placeholder direito (para equilibrar o layout)
-    right_placeholder = ft.Container(width=80)
 
     bottom_bar = ft.Container(
         content=ft.Row(
@@ -679,25 +801,24 @@ def main(page: ft.Page):
                     content=back_btn, width=80, alignment=ft.alignment.Alignment(0, 0)
                 ),
                 ft.Container(expand=True),
-                ft.Container(
-                    content=fab_btn,
-                    alignment=ft.alignment.Alignment(0, 0),
-                ),
+                ft.Container(content=fab_btn, alignment=ft.alignment.Alignment(0, 0)),
                 ft.Container(expand=True),
-                right_placeholder,
+                ft.Container(width=80),
             ],
             vertical_alignment="center",
         ),
         bgcolor=SURFACE,
         border=ft.Border(top=ft.BorderSide(1, BORDER)),
         padding=pad(h=16, t=8, b=16),
-        # safe_area bottom é aplicado via padding extra no container pai
     )
 
-    def set_appbar(title, show_back=False, show_sort=True):
+    def set_appbar(title, show_back=False, show_sort=True, show_search_btn=True):
         appbar_title.value = title
         back_btn.visible = show_back
         sort_btn.visible = show_sort
+        search_btn.visible = show_search_btn
+        if not show_search_btn:
+            _fechar_busca(update=False)
         appbar.update()
         bottom_bar.update()
 
@@ -722,12 +843,11 @@ def main(page: ft.Page):
         if src.id not in ids or tgt.id not in ids:
             return
         ids.remove(src.id)
-        tgt_pos = ids.index(tgt.id)
-        ids.insert(tgt_pos, src.id)
+        ids.insert(ids.index(tgt.id), src.id)
         for nova_ordem, iid in enumerate(ids):
-            item = session.get(Item, iid)
-            if item:
-                item.ordem = nova_ordem
+            it = session.get(Item, iid)
+            if it:
+                it.ordem = nova_ordem
         session.commit()
         renderizar()
 
@@ -737,10 +857,26 @@ def main(page: ft.Page):
         fab_btn.visible = True
         fab_btn.update()
 
-        from sqlalchemy import asc, desc
+        from sqlalchemy import asc, desc, or_
 
         modo = sort_state["modo"]
-        q = session.query(Item).filter_by(pai_id=pai_id())
+        query = search_state["query"]
+
+        q = session.query(Item)
+
+        if query:
+            # Busca global: título, conteúdo ou nome de tag
+            q = q.filter(Item.tipo != "Pasta")
+            q = q.filter(
+                or_(
+                    Item.titulo.ilike(f"%{query}%"),
+                    Item.conteudo.ilike(f"%{query}%"),
+                    Item.tags.any(Tag.nome.ilike(f"%{query}%")),
+                )
+            )
+        else:
+            q = q.filter(Item.pai_id == pai_id())
+
         if modo == "az":
             q = q.order_by(asc(Item.titulo))
         elif modo == "za":
@@ -749,6 +885,7 @@ def main(page: ft.Page):
             q = q.order_by(desc(Item.data_criacao), desc(Item.id))
         else:
             q = q.order_by(asc(Item.data_criacao), asc(Item.id))
+
         itens = q.all()
         pastas = [i for i in itens if i.tipo == "Pasta"]
         links = [i for i in itens if i.tipo == "Link"]
@@ -766,59 +903,92 @@ def main(page: ft.Page):
                 )
             return col
 
-        if pastas:
-            sections += [
-                section_title("PASTAS"),
-                ft.Container(height=6),
-                make_list(pastas),
-                ft.Container(height=16),
-            ]
-        if links:
-            sections += [
-                section_title("LINKS"),
-                ft.Container(height=6),
-                make_list(links),
-                ft.Container(height=16),
-            ]
-        if notas:
-            sections += [
-                section_title("NOTAS"),
-                ft.Container(height=6),
-                make_list(notas),
-            ]
-
-        if not itens:
-            sections = [
-                ft.Container(
-                    content=ft.Column(
-                        [
-                            ft.Container(height=60),
-                            ft.Icon(ft.Icons.YARD_ROUNDED, size=64, color=TEXT_DIM),
-                            ft.Container(height=16),
-                            ft.Text(
-                                "Jardim vazio",
-                                size=18,
-                                color=TEXT_SUB,
-                                weight="w600",
-                                text_align="center",
-                            ),
-                            ft.Text(
-                                "Toque em + para adicionar\npastas, links ou notas.",
-                                size=13,
-                                color=TEXT_DIM,
-                                text_align="center",
-                            ),
-                        ],
-                        horizontal_alignment="center",
-                    ),
-                )
-            ]
+        if query:
+            resultados = links + notas
+            if resultados:
+                sections += [
+                    section_title(f'RESULTADOS PARA "{query}"'),
+                    ft.Container(height=6),
+                    make_list(resultados),
+                ]
+            else:
+                sections = [
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Container(height=60),
+                                ft.Icon(
+                                    ft.Icons.SEARCH_OFF_ROUNDED, size=64, color=TEXT_DIM
+                                ),
+                                ft.Container(height=16),
+                                ft.Text(
+                                    "Nenhum resultado",
+                                    size=18,
+                                    color=TEXT_SUB,
+                                    weight="w600",
+                                    text_align="center",
+                                ),
+                                ft.Text(
+                                    f'Nada encontrado para "{query}".',
+                                    size=13,
+                                    color=TEXT_DIM,
+                                    text_align="center",
+                                ),
+                            ],
+                            horizontal_alignment="center",
+                        ),
+                    )
+                ]
+        else:
+            if pastas:
+                sections += [
+                    section_title("PASTAS"),
+                    ft.Container(height=6),
+                    make_list(pastas),
+                    ft.Container(height=16),
+                ]
+            if links:
+                sections += [
+                    section_title("LINKS"),
+                    ft.Container(height=6),
+                    make_list(links),
+                    ft.Container(height=16),
+                ]
+            if notas:
+                sections += [
+                    section_title("NOTAS"),
+                    ft.Container(height=6),
+                    make_list(notas),
+                ]
+            if not itens:
+                sections = [
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Container(height=60),
+                                ft.Icon(ft.Icons.YARD_ROUNDED, size=64, color=TEXT_DIM),
+                                ft.Container(height=16),
+                                ft.Text(
+                                    "Jardim vazio",
+                                    size=18,
+                                    color=TEXT_SUB,
+                                    weight="w600",
+                                    text_align="center",
+                                ),
+                                ft.Text(
+                                    "Toque em + para adicionar\npastas, links ou notas.",
+                                    size=13,
+                                    color=TEXT_DIM,
+                                    text_align="center",
+                                ),
+                            ],
+                            horizontal_alignment="center",
+                        ),
+                    )
+                ]
 
         main_content.content = ft.Column(
-            sections,
-            scroll="auto",
-            expand=True,
-            spacing=0,
+            sections, scroll="auto", expand=True, spacing=0
         )
         page.update()
 
@@ -833,23 +1003,32 @@ def main(page: ft.Page):
     # ── VER NOTA ──────────────────────────────────────────────────────────────
     def ver_nota(item):
         view_state["atual"] = "nota"
-        set_appbar(item.titulo, show_back=True, show_sort=False)
+        set_appbar(item.titulo, show_back=True, show_sort=False, show_search_btn=False)
         fab_btn.visible = False
         fab_btn.update()
 
+        cabecalho = [
+            ft.Row(
+                [
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        ft.Icons.EDIT_ROUNDED,
+                        icon_color=TEXT_SUB,
+                        on_click=lambda _: mostrar_editor(item, "Nota"),
+                        tooltip="Editar",
+                    ),
+                ]
+            ),
+        ]
+        if item.tags:
+            cabecalho.append(
+                ft.Row([tag_chip(t) for t in item.tags], spacing=6, wrap=True)
+            )
+            cabecalho.append(ft.Container(height=8))
+
         main_content.content = ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Container(expand=True),
-                        ft.IconButton(
-                            ft.Icons.EDIT_ROUNDED,
-                            icon_color=TEXT_SUB,
-                            on_click=lambda _: mostrar_editor(item, "Nota"),
-                            tooltip="Editar",
-                        ),
-                    ]
-                ),
+            cabecalho
+            + [
                 ft.Column(
                     [
                         ft.Markdown(
@@ -868,12 +1047,125 @@ def main(page: ft.Page):
         )
         page.update()
 
+    # ── EDITOR DE TAGS ────────────────────────────────────────────────────────
+    def build_tag_editor(tags_state):
+        chips_row = ft.Row(spacing=6, wrap=True)
+        sugest_row = ft.Row(spacing=6, wrap=True)
+
+        nova_field = ft.TextField(
+            hint_text="Nova tag...",
+            hint_style=ft.TextStyle(color=TEXT_DIM, size=12),
+            border_color=BORDER,
+            focused_border_color=ACCENT,
+            color=TEXT,
+            bgcolor=SURFACE,
+            border_radius=20,
+            content_padding=pad(h=12, v=6),
+            text_style=ft.TextStyle(size=12),
+            width=130,
+        )
+
+        def refresh():
+            chips_row.controls = [
+                tag_chip(t, on_remove=remover) for t in tags_state["selecionadas"]
+            ]
+            ids_sel = {t.id for t in tags_state["selecionadas"]}
+            todas = session.query(Tag).order_by(Tag.nome).all()
+            sugest_row.controls = [
+                ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Text(
+                            f"#{t.nome}", size=11, color=t.cor or ACCENT, weight="w600"
+                        ),
+                        bgcolor=CARD_HOV,
+                        border_radius=20,
+                        padding=pad(h=10, v=4),
+                        border=ft.Border.all(1, BORDER),
+                    ),
+                    on_tap=lambda e, tag=t: adicionar(tag),
+                )
+                for t in todas
+                if t.id not in ids_sel
+            ]
+            try:
+                chips_row.update()
+                sugest_row.update()
+            except Exception:
+                pass
+
+        def adicionar(tag):
+            if tag not in tags_state["selecionadas"]:
+                tags_state["selecionadas"].append(tag)
+            refresh()
+
+        def remover(tag):
+            tags_state["selecionadas"] = [
+                t for t in tags_state["selecionadas"] if t.id != tag.id
+            ]
+            refresh()
+
+        def criar_tag(e):
+            import random
+
+            nome = nova_field.value.strip().lower().replace(" ", "-")
+            if not nome:
+                return
+            existente = session.query(Tag).filter_by(nome=nome).first()
+            if existente:
+                adicionar(existente)
+            else:
+                nova = Tag(nome=nome, cor=random.choice(TAG_CORES))
+                session.add(nova)
+                session.commit()
+                adicionar(nova)
+            nova_field.value = ""
+            try:
+                nova_field.update()
+            except Exception:
+                pass
+
+        nova_field.on_submit = criar_tag
+        refresh()
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text("Tags", size=12, color=TEXT_SUB, weight="w600"),
+                    ft.Container(height=6),
+                    ft.Row(
+                        [
+                            chips_row,
+                            nova_field,
+                            ft.IconButton(
+                                ft.Icons.ADD_ROUNDED,
+                                icon_color=ACCENT,
+                                icon_size=18,
+                                tooltip="Adicionar tag",
+                                on_click=criar_tag,
+                                style=ft.ButtonStyle(padding=ft.Padding(4, 4, 4, 4)),
+                            ),
+                        ],
+                        vertical_alignment="center",
+                        wrap=True,
+                        spacing=6,
+                    ),
+                    ft.Container(height=6),
+                    sugest_row,
+                ],
+                spacing=0,
+            ),
+            bgcolor=CARD,
+            border_radius=12,
+            padding=pad(h=14, v=12),
+            border=ft.Border.all(1, BORDER),
+        )
+
     # ── EDITOR ────────────────────────────────────────────────────────────────
     def mostrar_editor(item_existente=None, tipo="Nota"):
         view_state["atual"] = "editor"
         is_nota = tipo == "Nota"
         header = ("Editar" if item_existente else "Novo") + f" {tipo}"
-        set_appbar(header, show_back=True, show_sort=False)
+        set_appbar(header, show_back=True, show_sort=False, show_search_btn=False)
         fab_btn.visible = False
         fab_btn.update()
 
@@ -890,27 +1182,32 @@ def main(page: ft.Page):
         )
 
         if is_nota:
+            tags_state = {
+                "selecionadas": list(item_existente.tags) if item_existente else []
+            }
+            tag_editor = build_tag_editor(tags_state)
 
             def on_save(content):
                 if not titulo_input.value.strip():
                     titulo_input.error_text = "Campo obrigatorio"
                     titulo_input.update()
                     return
+                import time
+
                 if item_existente:
                     item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = content
+                    item_existente.tags = tags_state["selecionadas"]
                 else:
-                    import time
-
-                    session.add(
-                        Item(
-                            titulo=titulo_input.value.strip(),
-                            conteudo=content,
-                            tipo=tipo,
-                            pai_id=pai_id(),
-                            data_criacao=int(time.time()),
-                        )
+                    novo = Item(
+                        titulo=titulo_input.value.strip(),
+                        conteudo=content,
+                        tipo=tipo,
+                        pai_id=pai_id(),
+                        data_criacao=int(time.time()),
                     )
+                    novo.tags = tags_state["selecionadas"]
+                    session.add(novo)
                 session.commit()
                 view_state["atual"] = "grid"
                 renderizar()
@@ -925,6 +1222,8 @@ def main(page: ft.Page):
                 [
                     ft.Container(height=8),
                     titulo_input,
+                    ft.Container(height=12),
+                    tag_editor,
                     ft.Container(height=12),
                     editor_widget,
                 ],
@@ -951,12 +1250,12 @@ def main(page: ft.Page):
                     titulo_input.error_text = "Campo obrigatorio"
                     titulo_input.update()
                     return
+                import time
+
                 if item_existente:
                     item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = conteudo_input.value
                 else:
-                    import time
-
                     session.add(
                         Item(
                             titulo=titulo_input.value.strip(),
@@ -1072,9 +1371,9 @@ def main(page: ft.Page):
 
         def criar(e):
             if tf.value.strip():
-                total = session.query(Item).filter_by(pai_id=pai_id()).count()
                 import time
 
+                total = session.query(Item).filter_by(pai_id=pai_id()).count()
                 session.add(
                     Item(
                         titulo=tf.value.strip(),
@@ -1200,20 +1499,16 @@ def main(page: ft.Page):
         page.update()
         fn()
 
-    # Liga o clique do FAB ao bottom sheet
     fab_btn.on_click = lambda _: [setattr(bs, "open", True), page.update()]
 
     # ── LAYOUT PRINCIPAL ──────────────────────────────────────────────────────
-    # Usa SafeArea para respeitar as barras nativas do sistema operacional
     page.add(
         ft.SafeArea(
             content=ft.Column(
                 [
                     appbar,
                     ft.Container(
-                        content=main_content,
-                        expand=True,
-                        padding=pad(h=16, t=16, b=8),
+                        content=main_content, expand=True, padding=pad(h=16, t=16, b=8)
                     ),
                     bottom_bar,
                 ],
