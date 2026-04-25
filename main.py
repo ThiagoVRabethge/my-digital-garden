@@ -323,7 +323,7 @@ def section_title(text):
 # ─── EDITOR DE NOTAS COM TOOLBAR ─────────────────────────────────────────────
 
 
-def build_note_editor(initial_value="", on_save=None, on_cancel=None):
+def build_note_editor(initial_value="", on_save=None, on_cancel=None, on_tap_link=None):
     content_field = ft.TextField(
         value=initial_value,
         multiline=True,
@@ -347,6 +347,7 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
                 selectable=True,
                 extension_set="gitHubFlavored",
                 code_theme="atom-one-dark",
+                on_tap_link=on_tap_link,
             )
         ],
         scroll="auto",
@@ -573,6 +574,15 @@ def main(page: ft.Page):
     page.bgcolor = BG
     page.padding = 0
     page.scroll = None
+    page.window.maximized = True
+
+    # ── Share Intent (Android) ────────────────────────────────────────────────
+    def handle_app_link(e):
+        url = e.data
+        if url and url.startswith("http"):
+            mostrar_editor_com_url(url)
+
+    page.on_app_link = handle_app_link
 
     session = Session()
     stack_nav = []
@@ -1036,6 +1046,7 @@ def main(page: ft.Page):
                             selectable=True,
                             extension_set="gitHubFlavored",
                             code_theme="atom-one-dark",
+                            on_tap_link=lambda e: abrir_link(e.data),
                         )
                     ],
                     scroll="auto",
@@ -1160,6 +1171,18 @@ def main(page: ft.Page):
             border=ft.Border.all(1, BORDER),
         )
 
+    # ── EDITOR COM URL PRÉ-PREENCHIDA (Share Intent) ──────────────────────────
+    def mostrar_editor_com_url(url):
+        class _FakeItem:
+            titulo = ""
+            conteudo = None
+            tipo = "Link"
+            tags = []
+
+        fake = _FakeItem()
+        fake.conteudo = url
+        mostrar_editor(fake, "Link")
+
     # ── EDITOR ────────────────────────────────────────────────────────────────
     def mostrar_editor(item_existente=None, tipo="Nota"):
         view_state["atual"] = "editor"
@@ -1194,7 +1217,11 @@ def main(page: ft.Page):
                     return
                 import time
 
-                if item_existente:
+                if (
+                    item_existente and item_existente.id
+                    if hasattr(item_existente, "id")
+                    else False
+                ):
                     item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = content
                     item_existente.tags = tags_state["selecionadas"]
@@ -1216,6 +1243,7 @@ def main(page: ft.Page):
                 initial_value=item_existente.conteudo if item_existente else "",
                 on_save=on_save,
                 on_cancel=voltar,
+                on_tap_link=lambda e: abrir_link(e.data),
             )
 
             main_content.content = ft.Column(
@@ -1252,7 +1280,11 @@ def main(page: ft.Page):
                     return
                 import time
 
-                if item_existente:
+                if (
+                    item_existente
+                    and hasattr(item_existente, "id")
+                    and item_existente.id
+                ):
                     item_existente.titulo = titulo_input.value.strip()
                     item_existente.conteudo = conteudo_input.value
                 else:
