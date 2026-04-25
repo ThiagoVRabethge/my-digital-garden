@@ -323,7 +323,7 @@ def section_title(text):
 # ─── EDITOR DE NOTAS COM TOOLBAR ─────────────────────────────────────────────
 
 
-def build_note_editor(initial_value="", on_save=None, on_cancel=None):
+def build_note_editor(initial_value="", on_save=None, on_cancel=None, on_tap_link=None):
     content_field = ft.TextField(
         value=initial_value,
         multiline=True,
@@ -347,6 +347,7 @@ def build_note_editor(initial_value="", on_save=None, on_cancel=None):
                 selectable=True,
                 extension_set="gitHubFlavored",
                 code_theme="atom-one-dark",
+                on_tap_link=on_tap_link,
             )
         ],
         scroll="auto",
@@ -573,6 +574,7 @@ def main(page: ft.Page):
     page.bgcolor = BG
     page.padding = 0
     page.scroll = None
+    page.window.maximized = True
 
     # ── Share Intent (Android) ────────────────────────────────────────────────
     def handle_app_link(e):
@@ -1044,6 +1046,7 @@ def main(page: ft.Page):
                             selectable=True,
                             extension_set="gitHubFlavored",
                             code_theme="atom-one-dark",
+                            on_tap_link=lambda e: abrir_link(e.data),
                         )
                     ],
                     scroll="auto",
@@ -1240,6 +1243,7 @@ def main(page: ft.Page):
                 initial_value=item_existente.conteudo if item_existente else "",
                 on_save=on_save,
                 on_cancel=voltar,
+                on_tap_link=lambda e: abrir_link(e.data),
             )
 
             main_content.content = ft.Column(
