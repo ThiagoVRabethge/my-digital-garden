@@ -35,7 +35,7 @@ jobs:
 
       - run: uv sync
       - run: flutter config --no-analytics
-      - run: uv run flet build apk --yes --verbose
+      - run: uv run flet build apk --yes --verbose --split-per-abi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -70,9 +70,12 @@ jobs:
           PYTHONIOENCODING: "utf-8"
         run: uv run flet build windows --yes --verbose
 
+      - name: Compactar build
+        run: Compress-Archive -Path build/windows/* -DestinationPath build/windows-release.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: build/windows/**
+          path: build/windows-release.zip
           if-no-files-found: error
           retention-days: 7
